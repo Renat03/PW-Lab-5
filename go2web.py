@@ -2,7 +2,17 @@ import argparse
 import socket
 from urllib.parse import urlparse
 import ssl
+import html2text
 
+
+def convert_html_to_text(html_content):
+    converter = html2text.HTML2Text()
+    converter.ignore_links = False
+    converter.ignore_images = True
+    return converter.handle(html_content)
+
+def format_content(response_type, content_body):
+    return convert_html_to_text(content_body)
 
 def fetch_web_content(target_url):
     parsed_url = urlparse(target_url)
@@ -53,7 +63,7 @@ def execute_cli():
 
     if arguments.url:
         content_type, content = fetch_web_content(arguments.url)
-        print(content)
+        print(format_content(content_type, content))
 
 if __name__ == '__main__':
     execute_cli()
