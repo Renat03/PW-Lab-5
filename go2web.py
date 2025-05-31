@@ -41,46 +41,82 @@ def convert_html_to_text(html_content):
 def format_content(response_type, content_body):
     return convert_html_to_text(content_body)
 
-def fetch_web_content(target_url):
-    cached = load_cached_data(target_url)
-    if cached:
-        return cached['content_type'], cached['body']
+def fetch_web_content(target_url, accept_header='text/html', remaining_redirects=10):
+    if remaining_redirects <= 0:
+        return None, "Redirect limit exceeded"
 
-    parsed_url = urlparse(target_url)
-    if not parsed_url.scheme:
-        target_url = 'http://' + target_url
+    url_hash = generate_url_hash(target_url)
+    cached_content = load_cached_data(url_hash)
+    if cached_content:
+        return cached_content['content_type'], cached_content['body']
+
+    try:
         parsed_url = urlparse(target_url)
+        if not parsed_url.scheme:
+            target_url = 'http://' + target_url
+            parsed_url = urlparse(target_url)
 
-    domain = parsed_url.netloc
-    url_path = parsed_url.path or '/'
+        domain = parsed_url.netloc
+        url_path = parsed_url.path or '/'
+        if parsed_url.query:
+            url_path += '?' + parsed_url.query
 
-    request_headers = {
-        'Host': domain,
-        'Connection': 'close'
-    }
+        request_headers = {
+            'User-Agent': 'Mozilla/5.0',
+            'Accept': accept_header,
+            'Connection': 'close',
+            'Host': domain
+        }
 
-    http_request = f"GET {url_path} HTTP/1.1\r\n"
-    http_request += '\r\n'.join(f'{key}: {value}' for key, value in request_headers.items())
-    http_request += '\r\n\r\n'
+        http_request = f"GET {url_path} HTTP/1.1\r\n"
+        http_request += '\r\n'.join(f'{key}: {value}' for key, value in request_headers.items())
+        http_request += '\r\n\r\n'
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as connection:
-        if parsed_url.scheme == 'https':
-            context = ssl.create_default_context()
-            connection = context.wrap_socket(connection, server_hostname=domain)
+        ssl_context = ssl.create_default_context()
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as connection:
+            if parsed_url.scheme == 'https':
+                connection = ssl_context.wrap_socket(connection, server_hostname=domain)
+            connection_port = 443 if parsed_url.scheme == 'https' else 80
+            connection.connect((domain, connection_port))
+            connection.sendall(http_request.encode())
 
-        connection.connect((domain, 443 if parsed_url.scheme == 'https' else 80))
-        connection.sendall(http_request.encode())
+            raw_response = b''
+            while True:
+                chunk = connection.recv(4096)
+                if not chunk:
+                    break
+                raw_response += chunk
 
-        response = b''
-        while True:
-            data = connection.recv(4096)
-            if not data:
+        header_data, _, content = raw_response.partition(b'\r\n\r\n')
+        headers = header_data.decode('utf-8', errors='ignore')
+
+        first_line = headers.split('\r\n')[0]
+        if '301' in first_line or '302' in first_line:
+            for header_line in headers.split('\r\n'):
+                if header_line.lower().startswith('location:'):
+                    redirect_url = header_line.split(':', 1)[1].strip()
+                    if not redirect_url.startswith('http'):
+                        redirect_url = f"{parsed_url.scheme}://{domain}{redirect_url}"
+                    return fetch_web_content(redirect_url, accept_header, remaining_redirects - 1)
+
+        response_type = 'text/html'
+        for header_line in headers.split('\r\n'):
+            if header_line.lower().startswith('content-type:'):
+                response_type = header_line.split(':', 1)[1].strip()
                 break
-            response += data
 
-    _, _, body = response.partition(b'\r\n\r\n')
+        text_content = content.decode('utf-8', errors='ignore')
 
-    return 'text/html', body.decode('utf-8', errors='ignore')
+        store_in_cache(url_hash, {
+            'content_type': response_type,
+            'body': text_content
+        })
+
+        return response_type, text_content
+
+    except Exception as error:
+        print(f"Request error: {str(error)}")
+        return None, None
 
 
 def perform_search(search_query):
