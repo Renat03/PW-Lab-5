@@ -142,6 +142,14 @@ def perform_search(search_query):
 
     return results
 
+def format_content(response_type, content_body):
+    if 'application/json' in response_type:
+        try:
+            import json
+            return json.dumps(json.loads(content_body), indent=2)
+        except:
+            return content_body
+    return convert_html_to_text(content_body)
 
 def execute_cli():
     arg_parser = argparse.ArgumentParser(description='go2web - Web client utility')
@@ -155,9 +163,9 @@ def execute_cli():
         return
 
     if arguments.url:
-        content_type, content = fetch_web_content(arguments.url)
+        accept = 'application/json' if arguments.json else 'text/html'
+        content_type, content = fetch_web_content(arguments.url, accept)
         print(format_content(content_type, content))
-
     elif arguments.search:
         query = ' '.join(arguments.search)
         perform_search(query)
