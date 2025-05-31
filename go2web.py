@@ -6,6 +6,30 @@ import html2text
 from bs4 import BeautifulSoup
 from urllib.parse import quote_plus
 import webbrowser
+import hashlib
+import pickle
+from pathlib import Path
+
+CACHE_FOLDER = Path.home() / '.go2web_cache'
+CACHE_FOLDER.mkdir(exist_ok=True)
+
+def generate_url_hash(url_string):
+    return hashlib.md5(url_string.encode()).hexdigest()
+
+def load_cached_data(url_string):
+    url_hash = generate_url_hash(url_string)
+    cache_path = CACHE_FOLDER / url_hash
+    if cache_path.exists():
+        with open(cache_path, 'rb') as f:
+            return pickle.load(f)
+    return None
+
+def store_in_cache(url_string, response_data):
+    url_hash = generate_url_hash(url_string)
+    cache_path = CACHE_FOLDER / url_hash
+    with open(cache_path, 'wb') as f:
+        pickle.dump(response_data, f)
+
 
 
 def convert_html_to_text(html_content):
@@ -18,6 +42,10 @@ def format_content(response_type, content_body):
     return convert_html_to_text(content_body)
 
 def fetch_web_content(target_url):
+    cached = load_cached_data(target_url)
+    if cached:
+        return cached['content_type'], cached['body']
+
     parsed_url = urlparse(target_url)
     if not parsed_url.scheme:
         target_url = 'http://' + target_url
@@ -51,6 +79,7 @@ def fetch_web_content(target_url):
             response += data
 
     _, _, body = response.partition(b'\r\n\r\n')
+
     return 'text/html', body.decode('utf-8', errors='ignore')
 
 
