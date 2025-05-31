@@ -1,45 +1,37 @@
 import argparse
-import socket
-from urllib.parse import urlparse
-import ssl
-import html2text
 from bs4 import BeautifulSoup
-from urllib.parse import quote_plus
-import webbrowser
 import hashlib
-import pickle
+import html2text
 from pathlib import Path
+import pickle
+import socket
+import ssl
+from urllib.parse import urlparse, quote_plus
+import webbrowser
 
 CACHE_FOLDER = Path.home() / '.go2web_cache'
 CACHE_FOLDER.mkdir(exist_ok=True)
 
-def generate_url_hash(url_string):
+
+def generate_url_hash(url_string: str) -> str:
     return hashlib.md5(url_string.encode()).hexdigest()
 
-def load_cached_data(url_string):
+
+def load_cached_data(url_string: str) -> str | None:
     url_hash = generate_url_hash(url_string)
     cache_path = CACHE_FOLDER / url_hash
     if cache_path.exists():
-        with open(cache_path, 'rb') as f:
-            return pickle.load(f)
+        with open(cache_path, 'rb') as cache_file:
+            return pickle.load(cache_file)
     return None
 
-def store_in_cache(url_string, response_data):
+
+def store_in_cache(url_string: str, response_data: str) -> None:
     url_hash = generate_url_hash(url_string)
     cache_path = CACHE_FOLDER / url_hash
-    with open(cache_path, 'wb') as f:
-        pickle.dump(response_data, f)
+    with open(cache_path, 'wb') as cache_file:
+        pickle.dump(response_data, cache_file)
 
-
-
-def convert_html_to_text(html_content):
-    converter = html2text.HTML2Text()
-    converter.ignore_links = False
-    converter.ignore_images = True
-    return converter.handle(html_content)
-
-def format_content(response_type, content_body):
-    return convert_html_to_text(content_body)
 
 def fetch_web_content(target_url, accept_header='text/html', remaining_redirects=10):
     if remaining_redirects <= 0:
@@ -119,42 +111,75 @@ def fetch_web_content(target_url, accept_header='text/html', remaining_redirects
         return None, None
 
 
-def perform_search(search_query):
-    search_url = f"http://www.bing.com/search?q={quote_plus(search_query)}"
-    content_type, html_data = fetch_web_content(search_url)
-
-    soup = BeautifulSoup(html_data, 'html.parser')
-    results = []
-
-    for item in soup.find_all('li', class_='b_algo'):
-        link = item.find('a')
-        if link:
-            results.append({
-                'title': link.get_text(strip=True),
-                'link': link['href']
-            })
-            if len(results) >= 10:
-                break
-
-    print(f"Top {len(results)} results:")
-    for idx, item in enumerate(results, 1):
-        print(f"{idx}. {item['title']}\n   {item['link']}")
-
-    return results
-
 def format_content(response_type, content_body):
     if 'application/json' in response_type:
         try:
             import json
-            return json.dumps(json.loads(content_body), indent=2)
+            parsed_json = json.loads(content_body)
+            return json.dumps(parsed_json, indent=2)
         except:
-            return content_body
-    return convert_html_to_text(content_body)
+            return content_body  # Return raw content if JSON parsing fails
+    else:
+        return convert_html_to_text(content_body)
+
+
+def convert_html_to_text(html_content):
+    converter = html2text.HTML2Text()
+    converter.ignore_links = False
+    converter.ignore_images = True
+    return converter.handle(html_content)
+
+
+def perform_search(search_query):
+    try:
+        search_url = f"http://www.bing.com/search?q={quote_plus(search_query)}"
+        content_type, html_data = fetch_web_content(search_url)
+        if not html_data:
+            return []
+
+        page_soup = BeautifulSoup(html_data, 'html.parser')
+        search_results = []
+
+        for item in page_soup.find_all('li', class_='b_algo'):
+            result_link = item.find('a')
+            if result_link:
+                result_title = result_link.get_text(strip=False)
+                result_url = result_link['href']
+                search_results.append({
+                    'title': result_title,
+                    'link': result_url
+                })
+                if len(search_results) >= 10:
+                    break
+
+        print(f"Top {len(search_results)} results for '{search_query}':\n")
+        for index, result in enumerate(search_results, 1):
+            print(f"{index}. {result['title']}")
+            print(f"   {result['link']}\n")
+
+        try:
+            user_choice = int(input("Enter result number to open (0 to skip): "))
+            if 1 <= user_choice <= len(search_results):
+                webbrowser.open(search_results[user_choice - 1]['link'])
+                print("Opening in default browser...")
+            elif user_choice == 0:
+                print("No selection made.")
+            else:
+                print("Invalid selection.")
+        except ValueError:
+            print("Please enter a valid number.")
+
+        return search_results
+
+    except Exception as error:
+        print(f"Search failed: {str(error)}")
+        return []
+
 
 def execute_cli():
     arg_parser = argparse.ArgumentParser(description='go2web - Web client utility')
-    arg_parser.add_argument('-u', '--url', help='make an HTTP request to the specified URL and print the response')
-    arg_parser.add_argument('-s', '--search', nargs='+', help='make an HTTP request to search the term using your favorite search engine and print top 10 results')
+    arg_parser.add_argument('-u', '--url', help='Make an HTTP request to the specified URL and print the response')
+    arg_parser.add_argument('-s', '--search', nargs='+', help='Make an HTTP request to search the term using your favorite search engine and print top 10 results')
     arg_parser.add_argument('--json', action='store_true', help='Request JSON format')
     arguments = arg_parser.parse_args()
 
@@ -163,12 +188,22 @@ def execute_cli():
         return
 
     if arguments.url:
-        accept = 'application/json' if arguments.json else 'text/html'
-        content_type, content = fetch_web_content(arguments.url, accept)
-        print(format_content(content_type, content))
+        accept_format = 'application/json' if arguments.json else 'text/html'
+        content_type, web_content = fetch_web_content(arguments.url, accept_format)
+        if web_content:
+            print(format_content(content_type, web_content))
     elif arguments.search:
         query = ' '.join(arguments.search)
-        perform_search(query)
+        results = perform_search(query)
+
+        if results:
+            print(f"Top {len(results)} results for '{query}':\n")
+            for idx, item in enumerate(results, 1):
+                print(f"{idx}. {item['title']}")
+                print(f"   {item['link']}\n")
+        else:
+            print("No results found. Try different terms.")
+
 
 if __name__ == '__main__':
     execute_cli()
